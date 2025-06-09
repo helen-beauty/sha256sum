@@ -1,9 +1,11 @@
 use std::env::args;
-//use std::fmt::Debug;
 use std::fs::{metadata, File};
-use std::io;
+use std::{fs, io};
 use std::io::{BufReader};
 use std::time::Instant;
+use ring::digest::Digest;
+use std::thread::{available_parallelism};
+
 //use ring::digest::{digest, SHA256};
 
 struct ChunkStream {
@@ -51,31 +53,34 @@ fn main() {
             let filename = &arguments[2]; // taking second argument
             let filemeta = metadata(&filename).unwrap();
             if   metadata(&filename).is_ok() { //if exist
+                let default_parallelism_approx = available_parallelism().unwrap().get();
+                println!("Default parallelism: {}", default_parallelism_approx);
                 if filemeta.is_file() { //if it is a file
                     println!("{filename} size {} bytes", filemeta.len()); //print some intro;
-                    let file_stream = ChunkStream::new(filename, 8192);
-                    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
-                    //string for profiling
-                    let start = Instant::now();                    
-
-                    for (i, chunk_result) in file_stream.unwrap().enumerate() {
-                        match chunk_result {
-                            Ok(chunk) => { context.update(&chunk); }
-                            Err(e) => eprintln!("Error reading chunk {}: {}", i + 1, e),
-                        }
-                    }
-                    let sha_sum = context.finish();
-                    
-                    //print profiling data
-                    println!("Elapsed: {:?}", start.elapsed());
-                    println!("{:?}", sha_sum);
+                        //string for profiling
+                        let start = Instant::now();
+                        let sha_sum = sha256_thread(filename);
+                        println!("{:?}", sha_sum);
+                        //print profiling data
+                        println!("Elapsed: {:?}", start.elapsed());
                 }
-                else { 
+                else if filemeta.is_dir() {
+                    let dir_content =  fs::read_dir(filename).unwrap();
+                    for entry in dir_content {
+                        let file_name = entry.unwrap().file_name().into_string().unwrap();
+                        let path_file: &mut String =  &mut String::from(filename);
+                        path_file.push('\\');
+                        path_file.push_str(file_name.as_str());
+                        let sha_sum = sha256_thread(path_file);
+                        println!("{:?} {}", sha_sum, file_name);
+                    }
+                }
+                else {
                     exit_message("Not a file");
                 }
 
             }
-            else { 
+            else {
                 exit_message("File not found or not accessible");
             }
         }
@@ -87,6 +92,20 @@ fn main() {
     else {
         print_help();
     }
+}
+
+fn sha256_thread(filename: &String) -> Digest {
+    const CHUNK_SIZE: usize = 8192;
+    let file_stream = ChunkStream::new(filename, CHUNK_SIZE);
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    for (i, chunk_result) in file_stream.unwrap().enumerate() {
+        match chunk_result {
+            Ok(chunk) => { context.update(&chunk); }
+            Err(e) => eprintln!("Error reading chunk {}: {}", i + 1, e),
+        }
+    }
+    let sha_sum = context.finish();
+    sha_sum
 }
 
 fn print_help() {
