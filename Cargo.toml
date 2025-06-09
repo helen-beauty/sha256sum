@@ -1,0 +1,8 @@
+[package]
+name = "checksum"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ring = "0.17.14"
+hex = "0.4.3"
