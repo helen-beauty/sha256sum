@@ -1,18 +1,17 @@
-use std::env::args;
-use std::fs::{metadata, File};
-use std::{fs, io, thread};
-use std::io::{BufReader};
-use std::time::Instant;
-use ring::digest::Digest;
-use std::thread::{available_parallelism};
-use std::sync::{Arc, Mutex};
-use hex;
 use hex::encode;
+use ring::digest::Digest;
+use std::env::args;
+use std::fs::{File, metadata, read_dir};
+use std::io::BufReader;
+use std::sync::{Arc, Mutex};
+use std::thread::available_parallelism;
+use std::time::Instant;
+use std::{fs, io, thread};
 
 struct ChunkStream {
     reader: BufReader<File>,
     buffer: Vec<u8>,
-//    chunk_size: usize,
+    //    chunk_size: usize,
 }
 
 impl ChunkStream {
@@ -22,7 +21,7 @@ impl ChunkStream {
         Ok(ChunkStream {
             reader,
             buffer: vec![0; chunk_size],
-//            chunk_size,
+            //            chunk_size,
         })
     }
 }
@@ -43,82 +42,119 @@ impl Iterator for ChunkStream {
 
 fn main() {
     //if no arguments, print help and exit
-    if  args().len() < 2 {
+    if args().len() < 2 {
         print_help();
     }
     //arguments given
-    else if  args().len() > 2 {
+    else if args().len() > 2 {
         let arguments = args().collect::<Vec<String>>(); //read arguments
         //checking first argument
-        if arguments[1] == String::from("-c") { //if -c (calculate) given and second argument given
+        if arguments[1] == String::from("-c") {
+            //if -c (calculate) given and second argument given
             let filename = &arguments[2]; // taking second argument
             let filemeta = metadata(&filename).unwrap();
-            if   metadata(&filename).is_ok() { //if exist
-                if filemeta.is_file() { //if it is a file
-                        //string for profiling
-                        let start = Instant::now();
-                        let sha_sum = encode(sha256_thread(filename).as_ref());
-                        println!("{}", sha_sum);
-                        //print profiling data
-                        println!("Elapsed: {:?}", start.elapsed());
-                }
-                else if filemeta.is_dir() {
+            if metadata(&filename).is_ok() {
+                //if exist
+                if filemeta.is_file() {
+                    //if it is a file
                     let start = Instant::now();
-                    multithread_dir(&filename);
+                    let sha_sum = encode(sha256_thread(filename).as_ref());
+                    println!("{sha_sum} *{filename}");
+                    //print profiling data
                     println!("Elapsed: {:?}", start.elapsed());
-                }
-                else {
+                } else if filemeta.is_dir() {
+                    let start = Instant::now();
+                    let files = dir_to_vec(filename);
+                    multithread_dir(files);
+                    println!("Elapsed: {:?}", start.elapsed());
+                } else {
                     exit_message("Not a file");
                 }
-
-            }
-            else {
+            } else {
                 exit_message("File not found or not accessible");
             }
-        }
-        else {
+        } else if arguments[1] == String::from("-v") {
+            //if -v (verify) given with second argument
+            let sha256_file = &arguments[2];
+            if sha256_file.ends_with(".sha256") {
+                let sha256_content: Vec<String> = fs::read_to_string(sha256_file)
+                    .expect("Failed to read input")
+                    .split("\n")
+                    .map(|line| line.to_string())
+                    .collect();
+                if sha256_content.is_empty() {
+                    exit_message("Empty sha256 file");
+                }
+
+                for item in sha256_content.iter() {
+                    if item.len() > 0 {
+                        let sha_str: Vec<&str> = item.splitn(2, " ").collect();
+                        let hash = sha_str[0].trim();
+                        let file_name = sha_str[1].trim_start_matches("*").trim().to_string();
+                        let calculated = encode(sha256_thread(&file_name).as_ref());
+                        if calculated == hash {
+                            println!("OK")
+                        } else {
+                            println!("FAIL")
+                        }
+                    }
+                }
+            } else {
+                exit_message("Not a SHA256 file");
+            }
+        } else {
             print_help();
         }
-
-    }
-    else {
+    } else {
         print_help();
     }
 }
 
-fn multithread_dir(filename: &&String) {
+fn dir_to_vec(filename: &String) -> Vec<String> {
+    let mut files: Vec<String> = vec![];
+    let dir_content = read_dir(filename).unwrap();
+    for entry in dir_content {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if metadata(&path).unwrap().is_file() {
+            files.push(path.to_str().unwrap().to_string());
+        }
+    }
+    files
+}
+
+fn multithread_dir(file_paths: Vec<String>) {
     let max_threads: usize = available_parallelism().unwrap().get();
     println!("Threads: {}", max_threads);
-    let dir_content: Vec<_> = fs::read_dir(filename).unwrap()
-        .map(|entry| entry.unwrap())
-        .collect();
 
-    let files = Arc::new(Mutex::new(dir_content.into_iter()));
+    // Create shared iterator from the vector of file paths
+    let files = Arc::new(Mutex::new(file_paths.into_iter()));
     let mut handles = Vec::new();
 
     for _ in 0..max_threads {
         let files = Arc::clone(&files);
-        let filename = filename.to_string(); // Clone filename for thread
 
         let handle = thread::spawn(move || {
             loop {
-                let entry = {
+                let file_path = {
                     let mut files_guard = files.lock().unwrap();
                     files_guard.next()
                 };
 
-                match entry {
-                    Some(entry) => {
-                        let file_name = entry.file_name().into_string().unwrap();
-                        let mut path_file = String::from(&filename);
-                        path_file.push('\\');
-                        path_file.push_str(&file_name);
+                match file_path {
+                    Some(path_file) => {
+                        // Extract just the filename for display
+                        let file_name = std::path::Path::new(&path_file)
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy();
 
-                        let file_meta_data = metadata(&path_file).unwrap();
-                        if file_meta_data.is_file() {
-                            let sha_sum = encode(sha256_thread(&path_file));
-                            println!("{} {}", sha_sum, file_name);
-                        }
+                        // Check if it's a file before processing
+                        //let file_meta_data = metadata(&path_file).unwrap();
+                        //if file_meta_data.is_file() {
+                        let sha_sum = encode(sha256_thread(&path_file));
+                        println!("{sha_sum} *{file_name}");
+                        //}
                     }
                     None => break, // No more files to process
                 }
@@ -140,7 +176,9 @@ fn sha256_thread(filename: &String) -> Digest {
     let mut context = ring::digest::Context::new(&ring::digest::SHA256);
     for (i, chunk_result) in file_stream.unwrap().enumerate() {
         match chunk_result {
-            Ok(chunk) => { context.update(&chunk); }
+            Ok(chunk) => {
+                context.update(&chunk);
+            }
             Err(e) => eprintln!("Error reading chunk {}: {}", i + 1, e),
         }
     }
@@ -149,13 +187,16 @@ fn sha256_thread(filename: &String) -> Digest {
 }
 
 fn print_help() {
-    println!("Calculates sha256 checksum for file\n
+    println!(
+        "Calculates sha256 checksum for file\n
         Usage:\n
         -c FILENAME  calculates checksum\n
-        -v FILENAME.sha256 - verify checksum\n");
+        -v FILENAME.sha256 - verify checksum\n"
+    );
     std::process::exit(0);
 }
 
 fn exit_message(message: &str) {
     println!("Program exited. {message}\n");
+    print_help();
 }
