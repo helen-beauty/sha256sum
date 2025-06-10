@@ -1,12 +1,13 @@
 use std::env::args;
 use std::fs::{metadata, File};
-use std::{fs, io};
+use std::{fs, io, thread};
 use std::io::{BufReader};
 use std::time::Instant;
 use ring::digest::Digest;
 use std::thread::{available_parallelism};
-
-//use ring::digest::{digest, SHA256};
+use std::sync::{Arc, Mutex};
+use hex;
+use hex::encode;
 
 struct ChunkStream {
     reader: BufReader<File>,
@@ -53,27 +54,18 @@ fn main() {
             let filename = &arguments[2]; // taking second argument
             let filemeta = metadata(&filename).unwrap();
             if   metadata(&filename).is_ok() { //if exist
-                let default_parallelism_approx = available_parallelism().unwrap().get();
-                println!("Default parallelism: {}", default_parallelism_approx);
                 if filemeta.is_file() { //if it is a file
-                    println!("{filename} size {} bytes", filemeta.len()); //print some intro;
                         //string for profiling
                         let start = Instant::now();
-                        let sha_sum = sha256_thread(filename);
-                        println!("{:?}", sha_sum);
+                        let sha_sum = encode(sha256_thread(filename).as_ref());
+                        println!("{}", sha_sum);
                         //print profiling data
                         println!("Elapsed: {:?}", start.elapsed());
                 }
                 else if filemeta.is_dir() {
-                    let dir_content =  fs::read_dir(filename).unwrap();
-                    for entry in dir_content {
-                        let file_name = entry.unwrap().file_name().into_string().unwrap();
-                        let path_file: &mut String =  &mut String::from(filename);
-                        path_file.push('\\');
-                        path_file.push_str(file_name.as_str());
-                        let sha_sum = sha256_thread(path_file);
-                        println!("{:?} {}", sha_sum, file_name);
-                    }
+                    let start = Instant::now();
+                    multithread_dir(&filename);
+                    println!("Elapsed: {:?}", start.elapsed());
                 }
                 else {
                     exit_message("Not a file");
@@ -91,6 +83,54 @@ fn main() {
     }
     else {
         print_help();
+    }
+}
+
+fn multithread_dir(filename: &&String) {
+    let max_threads: usize = available_parallelism().unwrap().get();
+    println!("Threads: {}", max_threads);
+    let dir_content: Vec<_> = fs::read_dir(filename).unwrap()
+        .map(|entry| entry.unwrap())
+        .collect();
+
+    let files = Arc::new(Mutex::new(dir_content.into_iter()));
+    let mut handles = Vec::new();
+
+    for _ in 0..max_threads {
+        let files = Arc::clone(&files);
+        let filename = filename.to_string(); // Clone filename for thread
+
+        let handle = thread::spawn(move || {
+            loop {
+                let entry = {
+                    let mut files_guard = files.lock().unwrap();
+                    files_guard.next()
+                };
+
+                match entry {
+                    Some(entry) => {
+                        let file_name = entry.file_name().into_string().unwrap();
+                        let mut path_file = String::from(&filename);
+                        path_file.push('\\');
+                        path_file.push_str(&file_name);
+
+                        let file_meta_data = metadata(&path_file).unwrap();
+                        if file_meta_data.is_file() {
+                            let sha_sum = encode(sha256_thread(&path_file));
+                            println!("{} {}", sha_sum, file_name);
+                        }
+                    }
+                    None => break, // No more files to process
+                }
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    // Wait for all threads to complete
+    for handle in handles {
+        handle.join().unwrap();
     }
 }
 
