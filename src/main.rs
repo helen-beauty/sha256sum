@@ -1,7 +1,7 @@
 use hex::encode;
 use ring::digest::Digest;
 use std::env::args;
-use std::fs::{File, metadata, read_dir};
+use std::fs::{File, Metadata, metadata, read_dir};
 use std::io::BufReader;
 use std::sync::{Arc, Mutex};
 use std::thread::available_parallelism;
@@ -39,107 +39,110 @@ impl Iterator for ChunkStream {
         }
     }
 }
+fn app_exit(message: &str, code: i32) -> ! {
+    eprintln!("{}", message);
+    std::process::exit(code);
+}
 
+fn strip_name(name: &str) -> &str {
+    // Function to strip leading asterisk and whitespace from a filename
+    name.trim_start_matches('*')
+        .trim_start_matches(".\\")
+        .trim()
+}
 fn main() {
-    //if no arguments, print help and exit
-    if args().len() < 2 {
-        print_help();
+    //parsing arguments
+    let arguments = args().collect::<Vec<String>>(); //read arguments
+    if arguments.len() < 2 {
+        print_help()
     }
-    //arguments given
-    else if args().len() > 2 {
-        let arguments = args().collect::<Vec<String>>(); //read arguments
-        //checking first argument
-        if arguments[1] == String::from("-c") {
+    match arguments[1].as_str() {
+        "-c" => {
             //if -c (calculate) given and second argument given
+            if arguments.len() < 3 {
+                app_exit("File name not given", 1);
+            }
             let filename = &arguments[2]; // taking second argument
             let filemeta = metadata(&filename).unwrap();
             if metadata(&filename).is_ok() {
                 //if exist
-                if filemeta.is_file() {
-                    //if it is a file
-                    let start = Instant::now();
-                    let sha_sum = encode(sha256_thread(filename).as_ref());
-                    println!("{sha_sum} *{filename}");
-                    //print profiling data
-                    println!("Elapsed: {:?}", start.elapsed());
-                } else if filemeta.is_dir() {
-                    let start = Instant::now();
-                    let files = dir_to_vec(filename);
-                    multithread_dir(files);
-                    println!("Elapsed: {:?}", start.elapsed());
-                } else {
-                    panic!("Not a file:{filename}");
-                }
-            } else {
-                panic!("File not found or not accessible");
+                let start = Instant::now(); //start timer
+                calculate_sha256(filename, filemeta);
+                println!("Calculation took {:?}", start.elapsed());
             }
-        } else if arguments[1] == String::from("-v") {
+        }
+        "-v" => {
             //if -v (verify) given with second argument
-            let sha256_file = &arguments[2]; //get filename
-            if sha256_file.ends_with(".sha256") { //check if it valid extension
-                let sha256_content = match read_text_file_safe(sha256_file) {
-                    Ok(lines) => lines,
-                    Err(e) => {
-                        panic!("Failed to read {}: {}", sha256_file, e)
-                    }
-                };
-                if sha256_content.is_empty() { //if empty (will reorganize code later, as this check should be before reading
-                    panic!("Empty sha256 file");
-                }
-                //let mut content_array: Vec<(String, String)> = Vec::new();
-                for item in sha256_content.iter() { //iteration to read each string
-                    if item.len() > 0 { //verify if string is not empty (sometimes it happens
-                        let sha_str: Vec<&str> = item.splitn(2, " ").collect(); //split string into parts splitn used to split exactly once
-                        let hash = sha_str[0].to_string().to_lowercase(); //get hash and making it lowercase
-                        let file_name = sha_str[1].trim_start_matches("*").trim().to_string(); //get filename and trim all unwanted characters
-                        if metadata(file_name.as_str()).is_ok() { //if file exist and accessible
-                            let calculated = hex::encode(sha256_thread(&file_name)); //calculating hash
-                            if calculated == hash { //compare hash with calculated
-                                println!("\"{}\" OK", file_name);
-                            } else {
-                                println!("\"{file_name}\". FAIL");
-                            }
-                        }
-                        else { 
-                            println!("\"{file_name}\". Not found");
-                        }
-                    }
-                }
-            } else {
-                panic!("Not a SHA256 file");
+            if arguments.len() < 3 {
+                app_exit("SHA256 file name not given", 1);
             }
-        } else {
+            let sha256_file = &arguments[2]; //get filename
+            if !sha256_file.ends_with(".sha256") {
+                app_exit("Not a SHA256 file", 2);
+            }
+            let sha256_content = match read_text_file_safe(sha256_file) {
+                Ok(lines) => lines,
+                Err(e) => {
+                    panic!("Failed to read {}: {}", sha256_file, e)
+                }
+            };
+            if sha256_content.is_empty() {
+                //if empty (will reorganize code later, as this check should be before reading
+                app_exit("Empty sha256 file", 3);
+            }
+            verify_sha256(sha256_content);
+        }
+        _ => {
             print_help();
         }
-    } else {
-        print_help();
     }
 }
 
-fn dir_to_vec(filename: &String) -> Vec<String> { //function to convert directory content into Vector of strings
+fn dir_to_vec(filename: &String) -> Vec<String> {
+    //function to convert directory content into Vector of strings
     let mut files: Vec<String> = vec![]; //initiating empty array
     let dir_content = read_dir(filename).unwrap(); //reading directory content
-    for entry in dir_content { //parsing entries
+    for entry in dir_content {
+        //parsing entries
         let entry = entry.unwrap(); //unwrap (rust working in such strange way)
         let path = entry.path(); //get file or dir full path
-        if metadata(&path).unwrap().is_file() { //if it is a file
+        if metadata(&path).unwrap().is_file() {
+            //if it is a file
             files.push(path.to_str().unwrap().to_string()); //push it into array
         }
     }
     files //return result
 }
-
+fn calculate_sha256(filename: &String, filemeta: Metadata) {
+    match (filemeta.is_file(), filemeta.is_dir()) {
+        (true, false) => {
+            //if it is a file
+            let sha_sum = encode(sha256_thread(filename).as_ref());
+            println!("{sha_sum} *{}", strip_name(filename));
+            //print profiling data
+        }
+        (false, true) => {
+            //if it is a dir
+            let files = dir_to_vec(filename);
+            multithread_dir(files);
+        }
+        _ => {
+            //neither file nor directory
+            let message: String = format!("{} not a file or directory", filename);
+            app_exit(message.as_str(), 2);
+        }
+    }
+}
 fn multithread_dir(file_paths: Vec<String>) {
     let max_threads: usize = available_parallelism().unwrap().get();
+    //let max_threads: usize = 1;
     println!("Threads: {}", max_threads);
 
     // Create shared iterator from the vector of file paths
     let files = Arc::new(Mutex::new(file_paths.into_iter()));
     let mut handles = Vec::new();
-
     for _ in 0..max_threads {
         let files = Arc::clone(&files);
-
         let handle = thread::spawn(move || {
             loop {
                 let file_path = {
@@ -154,13 +157,8 @@ fn multithread_dir(file_paths: Vec<String>) {
                             .file_name()
                             .unwrap()
                             .to_string_lossy();
-
-                        // Check if it's a file before processing
-                        //let file_meta_data = metadata(&path_file).unwrap();
-                        //if file_meta_data.is_file() {
                         let sha_sum = encode(sha256_thread(&path_file));
                         println!("{sha_sum} *{file_name}");
-                        //}
                     }
                     None => break, // No more files to process
                 }
@@ -210,9 +208,7 @@ fn read_text_file_safe(file_path: &str) -> Result<Vec<String>, Box<dyn std::erro
     // Try UTF-8 first
     match fs::read_to_string(file_path) {
         Ok(content) => {
-            let content_without_bom = content
-                .strip_prefix('\u{FEFF}')
-                .unwrap_or(&content);
+            let content_without_bom = content.strip_prefix('\u{FEFF}').unwrap_or(&content);
 
             Ok(content_without_bom
                 .lines() // Better than split("\n") - handles \r\n
@@ -224,14 +220,37 @@ fn read_text_file_safe(file_path: &str) -> Result<Vec<String>, Box<dyn std::erro
             let bytes = fs::read(file_path)?;
             let content = String::from_utf8_lossy(&bytes);
 
-            let content_without_bom = content
-                .strip_prefix('\u{FEFF}')
-                .unwrap_or(&content);
+            let content_without_bom = content.strip_prefix('\u{FEFF}').unwrap_or(&content);
 
             Ok(content_without_bom
                 .lines()
                 .map(|line| line.to_string())
                 .collect())
+        }
+    }
+}
+
+fn verify_sha256(sha256_content: Vec<String>) {
+    for item in sha256_content.iter() {
+        //iteration to read each string
+        if item.len() == 0 {
+            //verify if string is not empty (sometimes it happens
+            app_exit("No item retrieved from file", 4)
+        }
+        let sha_str: Vec<&str> = item.splitn(2, " ").collect(); //split string into parts splitn used to split exactly once
+        let hash = sha_str[0].to_string().to_lowercase(); //get hash and making it lowercase
+        let file_name = sha_str[1].trim_start_matches("*").trim().to_string(); //get filename and trim all unwanted characters
+        if metadata(file_name.as_str()).is_ok() {
+            //if file exist and accessible
+            let calculated = hex::encode(sha256_thread(&file_name)); //calculating hash
+            if calculated == hash {
+                //compare hash with calculated
+                println!("\"{}\" OK", file_name);
+            } else {
+                println!("\"{file_name}\". FAIL");
+            }
+        } else {
+            println!("\"{file_name}\". Not found");
         }
     }
 }
