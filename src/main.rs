@@ -68,39 +68,45 @@ fn main() {
                     multithread_dir(files);
                     println!("Elapsed: {:?}", start.elapsed());
                 } else {
-                    exit_message("Not a file");
+                    panic!("Not a file:{filename}");
                 }
             } else {
-                exit_message("File not found or not accessible");
+                panic!("File not found or not accessible");
             }
         } else if arguments[1] == String::from("-v") {
             //if -v (verify) given with second argument
-            let sha256_file = &arguments[2];
-            if sha256_file.ends_with(".sha256") {
-                let sha256_content: Vec<String> = fs::read_to_string(sha256_file)
-                    .expect("Failed to read input")
-                    .split("\n")
-                    .map(|line| line.to_string())
-                    .collect();
-                if sha256_content.is_empty() {
-                    exit_message("Empty sha256 file");
+            let sha256_file = &arguments[2]; //get filename
+            if sha256_file.ends_with(".sha256") { //check if it valid extension
+                let sha256_content = match read_text_file_safe(sha256_file) {
+                    Ok(lines) => lines,
+                    Err(e) => {
+                        panic!("Failed to read {}: {}", sha256_file, e)
+                    }
+                };
+                if sha256_content.is_empty() { //if empty (will reorganize code later, as this check should be before reading
+                    panic!("Empty sha256 file");
                 }
-
-                for item in sha256_content.iter() {
-                    if item.len() > 0 {
-                        let sha_str: Vec<&str> = item.splitn(2, " ").collect();
-                        let hash = sha_str[0].trim();
-                        let file_name = sha_str[1].trim_start_matches("*").trim().to_string();
-                        let calculated = encode(sha256_thread(&file_name).as_ref());
-                        if calculated == hash {
-                            println!("OK")
-                        } else {
-                            println!("FAIL")
+                //let mut content_array: Vec<(String, String)> = Vec::new();
+                for item in sha256_content.iter() { //iteration to read each string
+                    if item.len() > 0 { //verify if string is not empty (sometimes it happens
+                        let sha_str: Vec<&str> = item.splitn(2, " ").collect(); //split string into parts splitn used to split exactly once
+                        let hash = sha_str[0].to_string().to_lowercase(); //get hash and making it lowercase
+                        let file_name = sha_str[1].trim_start_matches("*").trim().to_string(); //get filename and trim all unwanted characters
+                        if metadata(file_name.as_str()).is_ok() { //if file exist and accessible
+                            let calculated = hex::encode(sha256_thread(&file_name)); //calculating hash
+                            if calculated == hash { //compare hash with calculated
+                                println!("\"{}\" OK", file_name);
+                            } else {
+                                println!("\"{file_name}\". FAIL");
+                            }
+                        }
+                        else { 
+                            println!("\"{file_name}\". Not found");
                         }
                     }
                 }
             } else {
-                exit_message("Not a SHA256 file");
+                panic!("Not a SHA256 file");
             }
         } else {
             print_help();
@@ -110,17 +116,17 @@ fn main() {
     }
 }
 
-fn dir_to_vec(filename: &String) -> Vec<String> {
-    let mut files: Vec<String> = vec![];
-    let dir_content = read_dir(filename).unwrap();
-    for entry in dir_content {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if metadata(&path).unwrap().is_file() {
-            files.push(path.to_str().unwrap().to_string());
+fn dir_to_vec(filename: &String) -> Vec<String> { //function to convert directory content into Vector of strings
+    let mut files: Vec<String> = vec![]; //initiating empty array
+    let dir_content = read_dir(filename).unwrap(); //reading directory content
+    for entry in dir_content { //parsing entries
+        let entry = entry.unwrap(); //unwrap (rust working in such strange way)
+        let path = entry.path(); //get file or dir full path
+        if metadata(&path).unwrap().is_file() { //if it is a file
+            files.push(path.to_str().unwrap().to_string()); //push it into array
         }
     }
-    files
+    files //return result
 }
 
 fn multithread_dir(file_paths: Vec<String>) {
@@ -188,15 +194,44 @@ fn sha256_thread(filename: &String) -> Digest {
 
 fn print_help() {
     println!(
-        "Calculates sha256 checksum for file\n
-        Usage:\n
-        -c FILENAME  calculates checksum\n
-        -v FILENAME.sha256 - verify checksum\n"
+        "Calculates sha256 checksum for file or directory\n
+        Usage:\r
+        -c FILENAME or Path - calculates checksum\r
+        -v FILENAME.sha256 - verify checksum\n
+        Examples:\r
+        sha256sum -c example.iso\r
+        sha256sum -c C:\\Downloads\\\r
+        sha256sum -v example.sha256"
     );
     std::process::exit(0);
 }
 
-fn exit_message(message: &str) {
-    println!("Program exited. {message}\n");
-    print_help();
+fn read_text_file_safe(file_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    // Try UTF-8 first
+    match fs::read_to_string(file_path) {
+        Ok(content) => {
+            let content_without_bom = content
+                .strip_prefix('\u{FEFF}')
+                .unwrap_or(&content);
+
+            Ok(content_without_bom
+                .lines() // Better than split("\n") - handles \r\n
+                .map(|line| line.to_string())
+                .collect())
+        }
+        Err(_) => {
+            // File is not valid UTF-8, try lossy conversion
+            let bytes = fs::read(file_path)?;
+            let content = String::from_utf8_lossy(&bytes);
+
+            let content_without_bom = content
+                .strip_prefix('\u{FEFF}')
+                .unwrap_or(&content);
+
+            Ok(content_without_bom
+                .lines()
+                .map(|line| line.to_string())
+                .collect())
+        }
+    }
 }
