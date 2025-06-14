@@ -1,0 +1,7 @@
+0: Normal exit
+1: Missing file name
+2: Not an SHA256 file given
+3: Empty sha256 file given
+4: Neither file or directory given
+5: Unable to retrieve data from SHA256 file
+6: Unable to read file

@@ -63,7 +63,12 @@ fn main() {
                 app_exit("File name not given", 1);
             }
             let filename = &arguments[2]; // taking second argument
-            let filemeta = metadata(&filename).unwrap();
+            let filemeta = match metadata(&filename) {
+                Ok(meta) => meta,
+                Err(e) => {
+                    app_exit(&format!("Unable to read {filename}.\nError: {e}"), 6);
+                }
+            };
             if metadata(&filename).is_ok() {
                 //if exist
                 let start = Instant::now(); //start timer
@@ -83,7 +88,7 @@ fn main() {
             let sha256_content = match read_text_file_safe(sha256_file) {
                 Ok(lines) => lines,
                 Err(e) => {
-                    panic!("Failed to read {}: {}", sha256_file, e)
+                    app_exit((format!("Failed to read {}: {}", sha256_file, e)).as_str(), 6)
                 }
             };
             if sha256_content.is_empty() {
@@ -129,14 +134,18 @@ fn calculate_sha256(filename: &String, filemeta: Metadata) {
         _ => {
             //neither file nor directory
             let message: String = format!("{} not a file or directory", filename);
-            app_exit(message.as_str(), 2);
+            app_exit(message.as_str(), 4);
         }
     }
 }
 fn multithread_dir(file_paths: Vec<String>) {
-    let max_threads: usize = available_parallelism().unwrap().get();
-    //let max_threads: usize = 1;
-    println!("Threads: {}", max_threads);
+    let max_threads: usize = match available_parallelism().unwrap().get() {
+        4 => 4,
+        1 => 1,
+        2..4 => 2,
+        n if n > 4 => 4,
+        _ => 4
+    };
 
     // Create shared iterator from the vector of file paths
     let files = Arc::new(Mutex::new(file_paths.into_iter()));
@@ -175,7 +184,7 @@ fn multithread_dir(file_paths: Vec<String>) {
 }
 
 fn sha256_thread(filename: &String) -> Digest {
-    const CHUNK_SIZE: usize = 8192;
+    const CHUNK_SIZE: usize = 1048576;
     let file_stream = ChunkStream::new(filename, CHUNK_SIZE);
     let mut context = ring::digest::Context::new(&ring::digest::SHA256);
     for (i, chunk_result) in file_stream.unwrap().enumerate() {
@@ -209,7 +218,6 @@ fn read_text_file_safe(file_path: &str) -> Result<Vec<String>, Box<dyn std::erro
     match fs::read_to_string(file_path) {
         Ok(content) => {
             let content_without_bom = content.strip_prefix('\u{FEFF}').unwrap_or(&content);
-
             Ok(content_without_bom
                 .lines() // Better than split("\n") - handles \r\n
                 .map(|line| line.to_string())
@@ -235,14 +243,14 @@ fn verify_sha256(sha256_content: Vec<String>) {
         //iteration to read each string
         if item.len() == 0 {
             //verify if string is not empty (sometimes it happens
-            app_exit("No item retrieved from file", 4)
+            app_exit("No item retrieved from file", 5)
         }
         let sha_str: Vec<&str> = item.splitn(2, " ").collect(); //split string into parts splitn used to split exactly once
         let hash = sha_str[0].to_string().to_lowercase(); //get hash and making it lowercase
         let file_name = sha_str[1].trim_start_matches("*").trim().to_string(); //get filename and trim all unwanted characters
         if metadata(file_name.as_str()).is_ok() {
-            //if file exist and accessible
-            let calculated = hex::encode(sha256_thread(&file_name)); //calculating hash
+            //if a file exists and accessible
+            let calculated = encode(sha256_thread(&file_name)); //calculating hash
             if calculated == hash {
                 //compare hash with calculated
                 println!("\"{}\" OK", file_name);
@@ -250,7 +258,7 @@ fn verify_sha256(sha256_content: Vec<String>) {
                 println!("\"{file_name}\". FAIL");
             }
         } else {
-            println!("\"{file_name}\". Not found");
+            println!("\"{file_name}\". Cannot read");
         }
     }
 }
