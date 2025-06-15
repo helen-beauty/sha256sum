@@ -1,8 +1,15 @@
 [package]
-name = "checksum"
+name = "sha256sum"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 ring = "0.17.14"
 hex = "0.4.3"
+
+[profile.release]
+opt-level = "z"
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
