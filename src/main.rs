@@ -5,7 +5,6 @@ use std::fs::{File, Metadata, metadata, read_dir};
 use std::io::BufReader;
 use std::sync::{Arc, Mutex};
 use std::thread::available_parallelism;
-use std::time::Instant;
 use std::{fs, io, thread};
 
 struct ChunkStream {
@@ -71,9 +70,7 @@ fn main() {
             };
             if metadata(&filename).is_ok() {
                 //if exist
-                let start = Instant::now(); //start timer
                 calculate_sha256(filename, filemeta);
-                println!("Calculation took {:?}", start.elapsed());
             }
         }
         "-v" => {
@@ -88,7 +85,7 @@ fn main() {
             let sha256_content = match read_text_file_safe(sha256_file) {
                 Ok(lines) => lines,
                 Err(e) => {
-                    app_exit((format!("Failed to read {}: {}", sha256_file, e)).as_str(), 6)
+                    app_exit(format!("Failed to read {}: {}", sha256_file, e).as_str(), 6)
                 }
             };
             if sha256_content.is_empty() {
@@ -124,7 +121,6 @@ fn calculate_sha256(filename: &String, filemeta: Metadata) {
             //if it is a file
             let sha_sum = encode(sha256_thread(filename).as_ref());
             println!("{sha_sum} *{}", strip_name(filename));
-            //print profiling data
         }
         (false, true) => {
             //if it is a dir
@@ -208,7 +204,9 @@ fn print_help() {
         Examples:\r
         sha256sum -c example.iso\r
         sha256sum -c C:\\Downloads\\\r
-        sha256sum -v example.sha256"
+        sha256sum -v example.sha256\n\n
+        Author: Nikolay Artamonov. MIT License.\n\
+        https://github.com/helen-beauty/sha256sum\nhttps://nickartamonov.ru"
     );
     std::process::exit(0);
 }

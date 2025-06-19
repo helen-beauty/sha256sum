@@ -1,6 +1,6 @@
 [package]
 name = "sha256sum"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
@@ -8,8 +8,11 @@ ring = "0.17.14"
 hex = "0.4.3"
 
 [profile.release]
-opt-level = "z"
-lto = "thin"
+opt-level = 3
+lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+overflow-checks = false
+debug-assertions = false
+incremental = false
