@@ -196,18 +196,16 @@ fn sha256_thread(filename: &String) -> Digest {
 }
 
 fn print_help() {
-    println!(
-        "Calculates sha256 checksum for file or directory\n
-        Usage:\r
-        -c FILENAME or Path - calculates checksum\r
-        -v FILENAME.sha256 - verify checksum\n
-        Examples:\r
-        sha256sum -c example.iso\r
-        sha256sum -c C:\\Downloads\\\r
-        sha256sum -v example.sha256\n\n
-        Author: Nikolay Artamonov. MIT License.\n\
-        https://github.com/helen-beauty/sha256sum\nhttps://nickartamonov.ru"
-    );
+    println!("Calculates sha256 checksum for file or directory\r\n
+Usage:\r
+      -c FILENAME or Path - calculates checksum\r
+      -v FILENAME.sha256 - verify checksum\r\n
+Examples:\r
+      sha256sum -c example.iso\r
+      sha256sum -c C:\\Downloads\\\r
+      sha256sum -v example.sha256\r\r\n
+Author: Nikolay Artamonov. MIT License.\r
+      https://github.com/helen-beauty/sha256sum");
     std::process::exit(0);
 }
 
